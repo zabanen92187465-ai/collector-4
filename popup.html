@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Collector 4.0</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <main class="app">
+    <header class="header">
+      <div>
+        <h1>Collector 4.0</h1>
+        <p id="pageStatus">Проверка страницы…</p>
+      </div>
+      <span class="version">0.1.0</span>
+    </header>
+
+    <section class="stats">
+      <div class="stat">
+        <strong id="foundCount">0</strong>
+        <span>Найдено</span>
+      </div>
+
+      <div class="stat">
+        <strong id="newCount">0</strong>
+        <span>Новых</span>
+      </div>
+
+      <div class="stat">
+        <strong id="updatedCount">0</strong>
+        <span>Обновлено</span>
+      </div>
+
+      <div class="stat">
+        <strong id="totalCount">0</strong>
+        <span>В базе</span>
+      </div>
+    </section>
+
+    <div id="progressBlock" class="progress-block hidden">
+      <div class="progress-track">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+      <p id="progressText">Подготовка…</p>
+    </div>
+
+    <section class="actions">
+      <button id="scanButton" class="button primary">
+        Сканировать страницу
+      </button>
+
+      <button id="exportJsonButton" class="button">
+        Экспорт JSON
+      </button>
+
+      <button id="exportCsvButton" class="button">
+        Экспорт CSV
+      </button>
+    </section>
+
+    <p id="message" class="message">Готов к работе.</p>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
