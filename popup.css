@@ -1,292 +1,132 @@
-const elements = {
-  pageStatus: document.getElementById("pageStatus"),
-  foundCount: document.getElementById("foundCount"),
-  newCount: document.getElementById("newCount"),
-  updatedCount: document.getElementById("updatedCount"),
-  totalCount: document.getElementById("totalCount"),
-  progressBlock: document.getElementById("progressBlock"),
-  progressBar: document.getElementById("progressBar"),
-  progressText: document.getElementById("progressText"),
-  scanButton: document.getElementById("scanButton"),
-  exportJsonButton: document.getElementById("exportJsonButton"),
-  exportCsvButton: document.getElementById("exportCsvButton"),
-  message: document.getElementById("message"),
-};
-
-let currentPageIsAvito = false;
-let isBusy = false;
-
-function setMessage(text, isError = false) {
-  elements.message.textContent = text;
-  elements.message.style.color = isError ? "#ff7777" : "#aeb6c2";
+:root {
+  color-scheme: dark;
+  font-family: Arial, sans-serif;
 }
 
-function updateButtons() {
-  elements.scanButton.disabled = isBusy || !currentPageIsAvito;
-  elements.exportJsonButton.disabled = isBusy;
-  elements.exportCsvButton.disabled = isBusy;
+* {
+  box-sizing: border-box;
 }
 
-function setBusy(value) {
-  isBusy = value;
-  updateButtons();
+body {
+  width: 340px;
+  margin: 0;
+  background: #111318;
+  color: #f4f6f8;
 }
 
-function showProgress(percent, text) {
-  elements.progressBlock.classList.remove("hidden");
-  elements.progressBar.style.width =
-    `${Math.max(0, Math.min(percent, 100))}%`;
-  elements.progressText.textContent = text;
+.app {
+  padding: 16px;
 }
 
-function hideProgress() {
-  elements.progressBlock.classList.add("hidden");
-  elements.progressBar.style.width = "0%";
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
-function isAvitoUrl(url) {
-  try {
-    const parsedUrl = new URL(url);
-    const hostname = parsedUrl.hostname.toLowerCase();
-
-    return (
-      parsedUrl.protocol === "https:" &&
-      (
-        hostname === "avito.ru" ||
-        hostname.endsWith(".avito.ru")
-      )
-    );
-  } catch {
-    return false;
-  }
+h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
 }
 
-async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({
-    active: true,
-    currentWindow: true,
-  });
-
-  return tab;
+.header p {
+  margin: 0;
+  color: #aeb6c2;
+  font-size: 13px;
 }
 
-async function loadStats() {
-  const result = await chrome.storage.local.get([
-    "collectorDatabase",
-    "collectorLastScan",
-  ]);
-
-  const database = result.collectorDatabase || {};
-  const lastScan = result.collectorLastScan || {};
-
-  elements.totalCount.textContent =
-    Object.keys(database).length;
-
-  elements.foundCount.textContent =
-    lastScan.found || 0;
-
-  elements.newCount.textContent =
-    lastScan.added || 0;
-
-  elements.updatedCount.textContent =
-    lastScan.updated || 0;
+.version {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #242833;
+  color: #aeb6c2;
+  font-size: 12px;
 }
 
-async function checkCurrentPage() {
-  try {
-    const tab = await getActiveTab();
-
-    currentPageIsAvito = Boolean(
-      tab?.url && isAvitoUrl(tab.url)
-    );
-
-    elements.pageStatus.textContent =
-      currentPageIsAvito
-        ? "Авито открыто"
-        : "Откройте страницу Авито";
-  } catch {
-    currentPageIsAvito = false;
-    elements.pageStatus.textContent =
-      "Не удалось проверить страницу";
-  }
-
-  updateButtons();
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
-async function requestPageScan(tabId) {
-  try {
-    return await chrome.tabs.sendMessage(tabId, {
-      type: "COLLECTOR_SCAN_PAGE",
-    });
-  } catch {
-    await chrome.scripting.executeScript({
-      target: {
-        tabId,
-      },
-      files: [
-        "content.js",
-      ],
-    });
-
-    return await chrome.tabs.sendMessage(tabId, {
-      type: "COLLECTOR_SCAN_PAGE",
-    });
-  }
+.stat {
+  padding: 14px;
+  border-radius: 14px;
+  background: #1b1f27;
+  border: 1px solid #2b313d;
 }
 
-async function scanPage() {
-  setBusy(true);
-
-  showProgress(
-    15,
-    "Подключаюсь к странице…"
-  );
-
-  setMessage(
-    "Сканирование началось."
-  );
-
-  try {
-    const tab = await getActiveTab();
-
-    if (
-      !tab?.id ||
-      !isAvitoUrl(tab.url || "")
-    ) {
-      currentPageIsAvito = false;
-      updateButtons();
-
-      throw new Error(
-        "Сначала откройте страницу Авито."
-      );
-    }
-
-    showProgress(
-      35,
-      "Ищу объявления…"
-    );
-
-    const response =
-      await requestPageScan(tab.id);
-
-    if (!response?.success) {
-      throw new Error(
-        response?.error ||
-        "Страница не вернула данные."
-      );
-    }
-
-    showProgress(
-      75,
-      "Обновляю накопительную базу…"
-    );
-
-    const saveResult =
-      await chrome.runtime.sendMessage({
-        type: "COLLECTOR_SAVE_CARDS",
-        cards: response.cards,
-        pageUrl: tab.url,
-      });
-
-    if (!saveResult?.success) {
-      throw new Error(
-        saveResult?.error ||
-        "Не удалось сохранить данные."
-      );
-    }
-
-    showProgress(
-      100,
-      "Готово."
-    );
-
-    elements.foundCount.textContent =
-      saveResult.stats.found;
-
-    elements.newCount.textContent =
-      saveResult.stats.added;
-
-    elements.updatedCount.textContent =
-      saveResult.stats.updated;
-
-    elements.totalCount.textContent =
-      saveResult.stats.total;
-
-    setMessage(
-      `Найдено: ${saveResult.stats.found}. ` +
-      `Новых: ${saveResult.stats.added}. ` +
-      `Обновлено: ${saveResult.stats.updated}.`
-    );
-  } catch (error) {
-    setMessage(
-      error?.message ||
-      "Ошибка сканирования.",
-      true
-    );
-  } finally {
-    setBusy(false);
-    setTimeout(hideProgress, 900);
-  }
+.stat strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 24px;
 }
 
-async function exportDatabase(format) {
-  setBusy(true);
-
-  setMessage(
-    `Подготавливаю экспорт ` +
-    `${format.toUpperCase()}…`
-  );
-
-  try {
-    const response =
-      await chrome.runtime.sendMessage({
-        type: "COLLECTOR_EXPORT",
-        format,
-      });
-
-    if (!response?.success) {
-      throw new Error(
-        response?.error ||
-        "Не удалось экспортировать базу."
-      );
-    }
-
-    setMessage(
-      `Файл ${response.filename} сохранён.`
-    );
-  } catch (error) {
-    setMessage(
-      error?.message ||
-      "Ошибка экспорта.",
-      true
-    );
-  } finally {
-    setBusy(false);
-  }
+.stat span {
+  color: #aeb6c2;
+  font-size: 13px;
 }
 
-elements.scanButton.addEventListener(
-  "click",
-  scanPage
-);
+.progress-block {
+  margin-bottom: 16px;
+}
 
-elements.exportJsonButton.addEventListener(
-  "click",
-  () => exportDatabase("json")
-);
+.progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #2a303a;
+}
 
-elements.exportCsvButton.addEventListener(
-  "click",
-  () => exportDatabase("csv")
-);
+.progress-bar {
+  width: 0;
+  height: 100%;
+  background: #4f8cff;
+  transition: width 0.25s ease;
+}
 
-Promise.all([
-  checkCurrentPage(),
-  loadStats(),
-]).catch((error) => {
-  setMessage(
-    error?.message ||
-    "Ошибка инициализации.",
-    true
-  );
-});
+.progress-block p {
+  margin: 8px 0 0;
+  color: #aeb6c2;
+  font-size: 12px;
+}
+
+.hidden {
+  display: none;
+}
+
+.actions {
+  display: grid;
+  gap: 10px;
+}
+
+.button {
+  min-height: 46px;
+  padding: 12px 14px;
+  border: 1px solid #343b48;
+  border-radius: 12px;
+  background: #20252e;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.button:disabled {
+  opacity: 0.5;
+}
+
+.button.primary {
+  border-color: #4f8cff;
+  background: #4f8cff;
+}
+
+.message {
+  min-height: 18px;
+  margin: 14px 0 0;
+  color: #aeb6c2;
+  font-size: 13px;
+  line-height: 1.4;
+}
