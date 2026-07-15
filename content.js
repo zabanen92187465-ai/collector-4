@@ -195,7 +195,154 @@ const CollectorParser = {
 
     return "";
   },
+sleep(milliseconds) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+},
 
+getLoadedAdCount() {
+  const adIds = new Set();
+
+  const links = [
+    ...document.querySelectorAll("a[href]"),
+  ];
+
+  for (const link of links) {
+    const url = this.makeAbsoluteUrl(
+      link.getAttribute("href")
+    );
+
+    if (!this.isRealAdUrl(url)) {
+      continue;
+    }
+
+    const adId = this.getAdId(url);
+
+    if (adId) {
+      adIds.add(adId);
+    }
+  }
+
+  return adIds.size;
+},
+
+findLoadMoreButton() {
+  const candidates = [
+    ...document.querySelectorAll(
+      'button, [role="button"], a'
+    ),
+  ];
+
+  return (
+    candidates.find((element) => {
+      const text = this.normalizeText(
+        element.textContent
+      );
+
+      if (!/загрузить\s+ещ[её]/i.test(text)) {
+        return false;
+      }
+
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+
+      const isDisabled =
+        element.disabled === true ||
+        element.getAttribute("aria-disabled") ===
+          "true";
+
+      return (
+        !isDisabled &&
+        style.display !== "none" &&
+        style.visibility !== "hidden" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    }) || null
+  );
+},
+
+async waitForMoreAds(
+  previousCount,
+  timeoutMilliseconds = 12000
+) {
+  const startedAt = Date.now();
+
+  while (
+    Date.now() - startedAt <
+    timeoutMilliseconds
+  ) {
+    await this.sleep(400);
+
+    const currentCount =
+      this.getLoadedAdCount();
+
+    if (currentCount > previousCount) {
+      return true;
+    }
+  }
+
+  return false;
+},
+
+async loadAllAds(maxClicks = 100) {
+  let clicks = 0;
+  let stalledAttempts = 0;
+
+  while (clicks < maxClicks) {
+    let button = this.findLoadMoreButton();
+
+    if (!button) {
+      window.scrollTo({
+        top: document.documentElement.scrollHeight,
+        behavior: "smooth",
+      });
+
+      await this.sleep(1000);
+
+      button = this.findLoadMoreButton();
+    }
+
+    if (!button) {
+      break;
+    }
+
+    const previousCount =
+      this.getLoadedAdCount();
+
+    button.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+
+    await this.sleep(500);
+
+    button.click();
+    clicks += 1;
+
+    const newAdsLoaded =
+      await this.waitForMoreAds(previousCount);
+
+    if (!newAdsLoaded) {
+      stalledAttempts += 1;
+
+      if (stalledAttempts >= 2) {
+        break;
+      }
+    } else {
+      stalledAttempts = 0;
+    }
+
+    await this.sleep(800);
+  }
+
+  return {
+    clicks,
+    loadedAds: this.getLoadedAdCount(),
+    reachedLimit: clicks >= maxClicks,
+  };
+},
   parsePage() {
     const cards = [];
     const seenIds = new Set();
@@ -264,23 +411,36 @@ const CollectorParser = {
     return cards;
   },
 };
+chrome.runtime.onMessage.addListener(
+  (message, sender, sendResponse) => {
+    if (
+      message?.type !==
+      "COLLECTOR_SCAN_PAGE"
+    ) {
+      return;
+    }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "COLLECTOR_SCAN_PAGE") {
-    return;
-  }
+    (async () => {
+      const loadResult =
+        await CollectorParser.loadAllAds();
 
-  try {
-    const cards = CollectorParser.parsePage();
+      const cards =
+        CollectorParser.parsePage();
 
-    sendResponse({
-      success: true,
-      cards,
+      sendResponse({
+        success: true,
+        cards,
+        loadResult,
+      });
+    })().catch((error) => {
+      sendResponse({
+        success: false,
+        error:
+          error?.message ||
+          "Ошибка чтения страницы Авито.",
+      });
     });
-  } catch (error) {
-    sendResponse({
-      success: false,
-      error: error?.message || "Ошибка чтения страницы Авито.",
-    });
+
+    return true;
   }
-});
+);
