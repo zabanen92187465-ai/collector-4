@@ -13,26 +13,52 @@ const elements = {
   message: document.getElementById("message"),
 };
 
+let currentPageIsAvito = false;
+let isBusy = false;
+
 function setMessage(text, isError = false) {
   elements.message.textContent = text;
   elements.message.style.color = isError ? "#ff7777" : "#aeb6c2";
 }
 
-function setBusy(isBusy) {
-  elements.scanButton.disabled = isBusy;
+function updateButtons() {
+  elements.scanButton.disabled = isBusy || !currentPageIsAvito;
   elements.exportJsonButton.disabled = isBusy;
   elements.exportCsvButton.disabled = isBusy;
 }
 
+function setBusy(value) {
+  isBusy = value;
+  updateButtons();
+}
+
 function showProgress(percent, text) {
   elements.progressBlock.classList.remove("hidden");
-  elements.progressBar.style.width = `${Math.max(0, Math.min(percent, 100))}%`;
+  elements.progressBar.style.width =
+    `${Math.max(0, Math.min(percent, 100))}%`;
   elements.progressText.textContent = text;
 }
 
 function hideProgress() {
   elements.progressBlock.classList.add("hidden");
   elements.progressBar.style.width = "0%";
+}
+
+function isAvitoUrl(url) {
+  try {
+    const parsedUrl = new URL(url);
+    const hostname = parsedUrl.hostname.toLowerCase();
+
+    return (
+      parsedUrl.protocol === "https:" &&
+      (
+        hostname === "avito.ru" ||
+        hostname.endsWith(".avito.ru")
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function getActiveTab() {
@@ -53,76 +79,150 @@ async function loadStats() {
   const database = result.collectorDatabase || {};
   const lastScan = result.collectorLastScan || {};
 
-  elements.totalCount.textContent = Object.keys(database).length;
-  elements.foundCount.textContent = lastScan.found || 0;
-  elements.newCount.textContent = lastScan.added || 0;
-  elements.updatedCount.textContent = lastScan.updated || 0;
+  elements.totalCount.textContent =
+    Object.keys(database).length;
+
+  elements.foundCount.textContent =
+    lastScan.found || 0;
+
+  elements.newCount.textContent =
+    lastScan.added || 0;
+
+  elements.updatedCount.textContent =
+    lastScan.updated || 0;
 }
 
 async function checkCurrentPage() {
   try {
     const tab = await getActiveTab();
-    const isAvito = Boolean(
-      tab?.url && /^https:\/\/(m\.)?avito\.ru\//i.test(tab.url)
+
+    currentPageIsAvito = Boolean(
+      tab?.url && isAvitoUrl(tab.url)
     );
 
-    elements.pageStatus.textContent = isAvito
-      ? "Авито открыто"
-      : "Откройте страницу Авито";
+    elements.pageStatus.textContent =
+      currentPageIsAvito
+        ? "Авито открыто"
+        : "Откройте страницу Авито";
+  } catch {
+    currentPageIsAvito = false;
+    elements.pageStatus.textContent =
+      "Не удалось проверить страницу";
+  }
 
-    elements.scanButton.disabled = !isAvito;
-  } catch (error) {
-    elements.pageStatus.textContent = "Не удалось проверить страницу";
-    elements.scanButton.disabled = true;
+  updateButtons();
+}
+
+async function requestPageScan(tabId) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, {
+      type: "COLLECTOR_SCAN_PAGE",
+    });
+  } catch {
+    await chrome.scripting.executeScript({
+      target: {
+        tabId,
+      },
+      files: [
+        "content.js",
+      ],
+    });
+
+    return await chrome.tabs.sendMessage(tabId, {
+      type: "COLLECTOR_SCAN_PAGE",
+    });
   }
 }
 
 async function scanPage() {
   setBusy(true);
-  showProgress(15, "Подключаюсь к странице…");
-  setMessage("Сканирование началось.");
+
+  showProgress(
+    15,
+    "Подключаюсь к странице…"
+  );
+
+  setMessage(
+    "Сканирование началось."
+  );
 
   try {
     const tab = await getActiveTab();
 
-    if (!tab?.id || !/^https:\/\/(m\.)?avito\.ru\//i.test(tab.url || "")) {
-      throw new Error("Сначала откройте страницу Авито.");
+    if (
+      !tab?.id ||
+      !isAvitoUrl(tab.url || "")
+    ) {
+      currentPageIsAvito = false;
+      updateButtons();
+
+      throw new Error(
+        "Сначала откройте страницу Авито."
+      );
     }
 
-    showProgress(35, "Ищу объявления…");
+    showProgress(
+      35,
+      "Ищу объявления…"
+    );
 
-    const response = await chrome.tabs.sendMessage(tab.id, {
-      type: "COLLECTOR_SCAN_PAGE",
-    });
+    const response =
+      await requestPageScan(tab.id);
 
     if (!response?.success) {
-      throw new Error(response?.error || "Страница не вернула данные.");
+      throw new Error(
+        response?.error ||
+        "Страница не вернула данные."
+      );
     }
 
-    showProgress(75, "Обновляю накопительную базу…");
+    showProgress(
+      75,
+      "Обновляю накопительную базу…"
+    );
 
-    const saveResult = await chrome.runtime.sendMessage({
-      type: "COLLECTOR_SAVE_CARDS",
-      cards: response.cards,
-      pageUrl: tab.url,
-    });
+    const saveResult =
+      await chrome.runtime.sendMessage({
+        type: "COLLECTOR_SAVE_CARDS",
+        cards: response.cards,
+        pageUrl: tab.url,
+      });
 
     if (!saveResult?.success) {
-      throw new Error(saveResult?.error || "Не удалось сохранить данные.");
+      throw new Error(
+        saveResult?.error ||
+        "Не удалось сохранить данные."
+      );
     }
 
-    showProgress(100, "Готово.");
+    showProgress(
+      100,
+      "Готово."
+    );
 
-    elements.foundCount.textContent = saveResult.stats.found;
-    elements.newCount.textContent = saveResult.stats.added;
-    elements.updatedCount.textContent = saveResult.stats.updated;
-    elements.totalCount.textContent = saveResult.stats.total;
+    elements.foundCount.textContent =
+      saveResult.stats.found;
+
+    elements.newCount.textContent =
+      saveResult.stats.added;
+
+    elements.updatedCount.textContent =
+      saveResult.stats.updated;
+
+    elements.totalCount.textContent =
+      saveResult.stats.total;
 
     setMessage(
-      `Найдено: ${saveResult.stats.found}. Новых: ${saveResult.stats.added}.`
+      `Найдено: ${saveResult.stats.found}. ` +
+      `Новых: ${saveResult.stats.added}. ` +
+      `Обновлено: ${saveResult.stats.updated}.`
     );
   } catch (error) {
-    setMessage(error.message || "Ошибка сканирования.", true);
+    setMessage(
+      error?.message ||
+      "Ошибка сканирования.",
+      true
+    );
   } finally {
     setBusy(false);
     setTimeout(hideProgress, 900);
@@ -131,34 +231,62 @@ async function scanPage() {
 
 async function exportDatabase(format) {
   setBusy(true);
-  setMessage(`Подготавливаю экспорт ${format.toUpperCase()}…`);
+
+  setMessage(
+    `Подготавливаю экспорт ` +
+    `${format.toUpperCase()}…`
+  );
 
   try {
-    const response = await chrome.runtime.sendMessage({
-      type: "COLLECTOR_EXPORT",
-      format,
-    });
+    const response =
+      await chrome.runtime.sendMessage({
+        type: "COLLECTOR_EXPORT",
+        format,
+      });
 
     if (!response?.success) {
-      throw new Error(response?.error || "Не удалось экспортировать базу.");
+      throw new Error(
+        response?.error ||
+        "Не удалось экспортировать базу."
+      );
     }
 
-    setMessage(`Файл ${response.filename} сохранён.`);
+    setMessage(
+      `Файл ${response.filename} сохранён.`
+    );
   } catch (error) {
-    setMessage(error.message || "Ошибка экспорта.", true);
+    setMessage(
+      error?.message ||
+      "Ошибка экспорта.",
+      true
+    );
   } finally {
     setBusy(false);
   }
 }
 
-elements.scanButton.addEventListener("click", scanPage);
-elements.exportJsonButton.addEventListener("click", () =>
-  exportDatabase("json")
-);
-elements.exportCsvButton.addEventListener("click", () =>
-  exportDatabase("csv")
+elements.scanButton.addEventListener(
+  "click",
+  scanPage
 );
 
-Promise.all([checkCurrentPage(), loadStats()]).catch((error) => {
-  setMessage(error.message || "Ошибка инициализации.", true);
+elements.exportJsonButton.addEventListener(
+  "click",
+  () => exportDatabase("json")
+);
+
+elements.exportCsvButton.addEventListener(
+  "click",
+  () => exportDatabase("csv")
+);
+
+Promise.all([
+  checkCurrentPage(),
+  loadStats(),
+]).catch((error) => {
+  setMessage(
+    error?.message ||
+    "Ошибка инициализации.",
+    true
+  );
 });
